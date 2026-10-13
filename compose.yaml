@@ -1,0 +1,13 @@
+services:
+  recipe-markdown:
+    build: .
+    image: recipe-markdown
+    container_name: recipe-markdown
+    ports:
+      - "8002:8002"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8002/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

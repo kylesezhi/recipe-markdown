@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Recipe to Markdown</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f7;
+    --card: #ffffff;
+    --text: #1a1a1e;
+    --muted: #6b6b76;
+    --accent: #0b63d6;
+    --accent-text: #ffffff;
+    --border: #e2e2e7;
+    --error: #b3261e;
+    --ok: #1a7f37;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141417;
+      --card: #1d1d22;
+      --text: #e9e9ee;
+      --muted: #9a9aa5;
+      --accent: #4c8dff;
+      --accent-text: #0e1116;
+      --border: #33333c;
+      --error: #ff8a80;
+      --ok: #6fdc8c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 0 1rem 4rem;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 46rem; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 2.25rem 0 0.25rem; }
+  .tagline { color: var(--muted); margin: 0 0 1.5rem; }
+  form { display: flex; gap: 0.5rem; }
+  input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    padding: 0.6rem 0.75rem;
+    font: inherit;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+  }
+  button {
+    padding: 0.6rem 1rem;
+    font: inherit;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:focus-visible, input:focus-visible, summary:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  #convert-button { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  #convert-button:disabled { opacity: 0.6; cursor: default; }
+  #status { margin: 1rem 0 0; }
+  #status:empty { display: none; }
+  .status-progress { color: var(--muted); }
+  .status-error { color: var(--error); }
+  .status-ok { color: var(--ok); }
+  details {
+    margin-top: 1.25rem;
+    padding: 0.75rem 0.9rem;
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+  }
+  summary { cursor: pointer; font-weight: 600; }
+  .hint { color: var(--muted); font-size: 0.9rem; margin: 0.5rem 0 0; }
+  textarea {
+    display: block;
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.6rem 0.75rem;
+    resize: vertical;
+    color: var(--text);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: 0.85rem/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  #output { margin-top: 1.75rem; }
+  #output label { display: block; font-weight: 600; margin-bottom: 0.35rem; }
+  #copy-button { margin-top: 0.75rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Recipe to Markdown</h1>
+  <p class="tagline">Paste a recipe URL, get clean markdown.</p>
+
+  <form id="convert-form">
+    <input id="recipe-url" type="text" inputmode="url" autocomplete="off" spellcheck="false"
+           placeholder="https://www.seriouseats.com/recipes/...">
+    <button id="convert-button" type="submit">Convert</button>
+  </form>
+
+  <p id="status" role="status" aria-live="polite"></p>
+
+  <details id="paste-section">
+    <summary>Paste page HTML instead</summary>
+    <p class="hint">If the site blocks download: open the page in your browser, save it as
+      &ldquo;Web Page, HTML only&rdquo;, open the saved file, select all, copy, and paste it here.</p>
+    <textarea id="pasted-html" rows="8" spellcheck="false" placeholder="&lt;!doctype html&gt; &#8230;"></textarea>
+    <button id="paste-convert" type="button">Convert pasted HTML</button>
+  </details>
+
+  <section id="output" hidden>
+    <label for="markdown-output">Markdown (editable)</label>
+    <textarea id="markdown-output" rows="18" spellcheck="false"></textarea>
+    <button id="copy-button" type="button">Copy</button>
+  </section>
+</main>
+
+<script>
+'use strict';
+
+const NAMED_ENTITIES = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ',
+  copy: '©', reg: '®', deg: '°', times: '×', divide: '÷',
+  frac12: '½', frac14: '¼', frac34: '¾', mdash: '—', ndash: '–',
+  hellip: '…', rsquo: '’', lsquo: '‘', rdquo: '”', ldquo: '“', bull: '•'
+};
+
+function safeCodePoint(code) {
+  if (!Number.isFinite(code) || code < 1 || code > 0x10ffff) return '';
+  try { return String.fromCodePoint(code); } catch { return ''; }
+}
+
+function stripHtml(value) {
+  if (value == null) return '';
+  let text = String(value);
+  text = text.replace(/<\s*(script|style)\b[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, ' ');
+  text = text.replace(/<\s*br\s*\/?\s*>/gi, '\n');
+  text = text.replace(/<\s*\/\s*(p|div|li|ul|ol|h[1-6]|section|blockquote|tr)\s*>/gi, '\n');
+  text = text.replace(/<[^>]*>/g, '');
+  text = text.replace(/&#x([0-9a-f]+);/gi, (_, hex) => safeCodePoint(parseInt(hex, 16)));
+  text = text.replace(/&#(\d+);/g, (_, dec) => safeCodePoint(parseInt(dec, 10)));
+  text = text.replace(/&([a-z][a-z0-9]*);/gi, (match, name) => {
+    const decoded = NAMED_ENTITIES[name.toLowerCase()];
+    return decoded === undefined ? match : decoded;
+  });
+  return text.replace(/\r/g, '').replace(/[ \t]+/g, ' ').replace(/\n\s*\n\s*/g, '\n').trim();
+}
+
+function oneLine(value) {
+  return stripHtml(value).replace(/\s+/g, ' ').trim();
+}
+
+function splitLines(value) {
+  return stripHtml(value).split(/\n+/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
+}
+
+function normalizeUrlInput(raw) {
+  let candidate = (raw || '').trim();
+  if (!candidate) return null;
+  if (!/^https?:\/\//i.test(candidate)) candidate = 'https://' + candidate;
+  try { return new URL(candidate).href; } catch { return null; }
+}
+
+const PROXIES = [
+  url => `https://proxy.corsfix.com/?${url}`,
+  url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+  url => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`,
+  url => `https://api.cors.lol/?url=${encodeURIComponent(url)}`,
+];
+
+async function fetchRecipeHtml(url, onProgress) {
+  const targets = [url, ...PROXIES.map(make => make(url))];
+  let lastError = 'network error';
+  for (let index = 0; index < targets.length; index++) {
+    if (onProgress) {
+      onProgress(index === 0 ? `Fetching ${url} …` : `Blocked — retrying through proxy ${index} …`);
+    }
+    try {
+      const response = await fetch(targets[index], { signal: AbortSignal.timeout(20000), redirect: 'follow' });
+      if (!response.ok) { lastError = `HTTP ${response.status}`; continue; }
+      const html = await response.text();
+      if (html && html.length > 500) return html;
+      lastError = 'empty response';
+    } catch (error) {
+      lastError = error && error.name === 'TimeoutError' ? 'timed out' : 'network error';
+    }
+  }
+  throw new Error(`Couldn't download the page (${lastError}).`);
+}
+
+function typeOf(node) {
+  if (!node || typeof node !== 'object') return '';
+  const raw = node['@type'];
+  const first = Array.isArray(raw) ? raw.find(part => typeof part === 'string') : raw;
+  return typeof first === 'string' ? first.split(/[/#]/).pop().toLowerCase() : '';
+}
+
+function isRecipeType(typeValue) {
+  return typeof typeValue === 'string' && typeValue.split(/[/#]/).pop().toLowerCase() === 'recipe';
+}
+
+function findRecipeNode(node, depth = 0) {
+  if (depth > 12 || node == null || typeof node !== 'object') return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findRecipeNode(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  const raw = node['@type'];
+  const types = Array.isArray(raw) ? raw : [raw];
+  if (types.some(isRecipeType)) return node;
+  for (const value of Object.values(node)) {
+    if (value && typeof value === 'object') {
+      const found = findRecipeNode(value, depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function itemListItems(list) {
+  const raw = list.itemListElement;
+  const elements = Array.isArray(raw) ? raw : (raw != null ? [raw] : []);
+  const items = [];
+  for (const element of elements) {
+    if (element == null) continue;
+    if (typeof element === 'object' && 'item' in element) { items.push(element.item); continue; }
+    items.push(element);
+  }
+  return items;
+}
+
+function jsonLdText(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return oneLine(value);
+  if (typeof value === 'number') return String(value);
+  if (Array.isArray(value)) return value.map(jsonLdText).filter(Boolean).join('\n');
+  if (typeof value === 'object') {
+    if (typeOf(value) === 'itemlist') {
+      return itemListItems(value).map(jsonLdText).filter(Boolean).join('\n');
+    }
+    return oneLine(value.text ?? value.plainText ?? value.name ?? '');
+  }
+  return '';
+}
+
+function pushInstructionItems(groups, title, candidates) {
+  const items = candidates
+    .map(candidate => oneLine(typeof candidate === 'string' ? candidate : jsonLdText(candidate)))
+    .filter(Boolean);
+  if (!items.length) return;
+  const last = groups[groups.length - 1];
+  if (last && last.title === (title || null)) last.items.push(...items);
+  else groups.push({ title: title || null, items });
+}
+
+function normalizeJsonLdInstructions(value, groups = [], title = null) {
+  if (value == null) return groups;
+  if (typeof value === 'string') { pushInstructionItems(groups, title, splitLines(value)); return groups; }
+  if (Array.isArray(value)) {
+    for (const entry of value) normalizeJsonLdInstructions(entry, groups, title);
+    return groups;
+  }
+  if (typeof value !== 'object') return groups;
+  const kind = typeOf(value);
+  if (kind === 'howtosection') {
+    normalizeJsonLdInstructions(value.itemListElement ?? [], groups, oneLine(value.name ?? '') || null);
+    return groups;
+  }
+  if (kind === 'itemlist') {
+    normalizeJsonLdInstructions(value.itemListElement ?? [], groups, title);
+    return groups;
+  }
+  if (kind === 'listitem') {
+    normalizeJsonLdInstructions(value.item ?? null, groups, title);
+    return groups;
+  }
+  pushInstructionItems(groups, title, [value]);
+  return groups;
+}
+
+function normalizeJsonLdIngredients(value) {
+  if (value == null) return [];
+  let entries = value;
+  if (typeOf(value) === 'itemlist') entries = itemListItems(value);
+  if (!Array.isArray(entries)) entries = [entries];
+  const items = [];
+  for (const entry of entries) {
+    if (typeof entry === 'string') { items.push(...splitLines(entry)); continue; }
+    if (entry && typeof entry === 'object') {
+      if (typeOf(entry) === 'itemlist') { items.push(...normalizeJsonLdIngredients(entry)); continue; }
+      const text = oneLine(
+        entry.plainText ?? entry.text ?? entry.name ??
+        (typeof entry.item === 'string' ? entry.item : '')
+      );
+      if (text) items.push(text);
+    }
+  }
+  return items;
+}
+
+function hasEnoughContent(ingredientGroups, instructionGroups) {
+  const ingredientCount = ingredientGroups.reduce((sum, group) => sum + group.items.length, 0);
+  const stepCount = instructionGroups.reduce((sum, group) => sum + group.items.length, 0);
+  return ingredientCount >= 2 || stepCount >= 2;
+}
+
+function recipeFromJsonLd(node) {
+  if (!node || typeof node !== 'object') return null;
+  const name = oneLine(node.name ?? node.headline ?? '');
+  const ingredients = normalizeJsonLdIngredients(node.recipeIngredient ?? node.ingredients ?? null);
+  const ingredientGroups = ingredients.length ? [{ title: null, items: ingredients }] : [];
+  const instructionGroups = normalizeJsonLdInstructions(node.recipeInstructions ?? null, [], null);
+  if (!hasEnoughContent(ingredientGroups, instructionGroups)) return null;
+  return { name: name || null, ingredientGroups, instructionGroups, notes: null };
+}
+
+function microdataInstructions(elements) {
+  const groups = [];
+  for (const element of elements) {
+    const stepTexts = [...element.querySelectorAll('li')]
+      .map(li => oneLine(li.textContent)).filter(Boolean);
+    if (stepTexts.length >= 2) {
+      const title = oneLine(element.querySelector('[itemprop="name" i]')?.textContent ?? '') || null;
+      groups.push({ title, items: stepTexts });
+      continue;
+    }
+    const text = oneLine(element.textContent);
+    if (!text) continue;
+    const last = groups[groups.length - 1];
+    if (last && !last.title) last.items.push(text);
+    else groups.push({ title: null, items: [text] });
+  }
+  return groups;
+}
+
+function recipeFromMicrodata(doc) {
+  const scope = doc.querySelector('[itemtype*="Recipe" i]');
+  if (!scope) return null;
+  const name = oneLine(scope.querySelector('[itemprop="name" i]')?.textContent ?? '');
+  const ingredients = [...scope.querySelectorAll('[itemprop="recipeIngredient" i], [itemprop="ingredients" i]')]
+    .map(element => oneLine(element.textContent)).filter(Boolean);
+  const ingredientGroups = ingredients.length >= 2 ? [{ title: null, items: ingredients }] : [];
+  const instructionGroups = microdataInstructions(
+    [...scope.querySelectorAll('[itemprop="recipeInstructions" i]')]
+  );
+  if (!hasEnoughContent(ingredientGroups, instructionGroups)) return null;
+  return { name: name || null, ingredientGroups, instructionGroups, notes: null };
+}
+
+const GENERIC_SECTION_TITLE = /^(ingredients?|instructions?|method|directions?|steps?|preparation|procedure)\b/i;
+
+function extractListGroups(section, kind) {
+  const groups = [];
+  let current = { title: null, items: [] };
+  const flush = () => {
+    if (current.items.length) groups.push(current);
+    current = { title: null, items: [] };
+  };
+  const visit = parent => {
+    for (const element of parent.children) {
+      const tag = element.tagName ? element.tagName.toLowerCase() : '';
+      if (!tag) continue;
+      if (tag === 'ul' || tag === 'ol') {
+        for (const li of element.children) {
+          if (li.tagName && li.tagName.toLowerCase() === 'li') {
+            const text = oneLine(li.textContent);
+            if (text) current.items.push(text);
+          }
+        }
+        continue;
+      }
+      if (/^h[1-6]$/.test(tag) || tag === 'b' || tag === 'strong' || tag === 'em' || tag === 'summary') {
+        if (element.querySelector('ul, ol')) { visit(element); continue; }
+        const title = oneLine(element.textContent);
+        if (title && title.length < 80 && !GENERIC_SECTION_TITLE.test(title)) {
+          flush();
+          current = { title, items: [] };
+        }
+        continue;
+      }
+      if (kind === 'instructions' && tag === 'p' && !element.querySelector('ul, ol')) {
+        const text = oneLine(element.textContent);
+        if (text.length >= 10) current.items.push(text);
+        continue;
+      }
+      if (element.querySelector('ul, ol')) visit(element);
+    }
+  };
+  visit(section);
+  flush();
+  return groups;
+}
+
+function findBestSection(doc, kind) {
+  const wanted = kind === 'ingredients'
+    ? /ingredient/i
+    : /instruction|direction|method|step|preparation|procedure/i;
+  const avoided = kind === 'ingredients'
+    ? /instruction|direction|method|step|preparation|procedure/i
+    : /ingredient/i;
+  let best = null;
+  for (const element of doc.querySelectorAll('[class], [id]')) {
+    const signature = `${element.getAttribute('class') ?? ''} ${element.id ?? ''}`;
+    if (!wanted.test(signature) || avoided.test(signature)) continue;
+    const groups = extractListGroups(element, kind);
+    const score = groups.reduce((sum, group) => sum + group.items.length, 0);
+    if (score < 2) continue;
+    const footprint = element.textContent.length;
+    if (!best || score > best.score || (score === best.score && footprint < best.footprint)) {
+      best = { element, score, footprint };
+    }
+  }
+  return best ? best.element : null;
+}
+
+function heuristicName(doc) {
+  const ogTitle = doc.querySelector('meta[property="og:title"], meta[name="og:title"]');
+  return oneLine(ogTitle ? ogTitle.getAttribute('content') ?? '' : '')
+    || oneLine(doc.querySelector('h1')?.textContent ?? '')
+    || oneLine(doc.title ?? '')
+    || null;
+}
+
+function findNotes(doc) {
+  for (const element of doc.querySelectorAll('[class*="note" i], [id*="note" i], [class*="tip" i]')) {
+    if (element.querySelector('ul, ol')) continue;
+    const text = oneLine(element.textContent);
+    if (text.length > 20 && text.length < 1200) return text;
+  }
+  return null;
+}
+
+function recipeFromHeuristics(doc) {
+  const ingredientSection = findBestSection(doc, 'ingredients');
+  const instructionSection = findBestSection(doc, 'instructions');
+  const ingredientGroups = ingredientSection ? extractListGroups(ingredientSection, 'ingredients') : [];
+  const instructionGroups = instructionSection ? extractListGroups(instructionSection, 'instructions') : [];
+  if (!hasEnoughContent(ingredientGroups, instructionGroups)) return null;
+  return { name: heuristicName(doc), ingredientGroups, instructionGroups, notes: findNotes(doc) };
+}
+
+function parseRecipe(html, sourceUrl) {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  for (const script of doc.querySelectorAll('script[type*="ld+json" i]')) {
+    let data;
+    try { data = JSON.parse(script.textContent); } catch { continue; }
+    const recipe = recipeFromJsonLd(findRecipeNode(data));
+    if (recipe) return withDefaults(recipe, sourceUrl, doc);
+  }
+  const fromMicrodata = recipeFromMicrodata(doc);
+  if (fromMicrodata) return withDefaults(fromMicrodata, sourceUrl, doc);
+  const fromHeuristics = recipeFromHeuristics(doc);
+  if (fromHeuristics) return withDefaults(fromHeuristics, sourceUrl, doc);
+  return null;
+}
+
+function withDefaults(recipe, sourceUrl, doc) {
+  if (!recipe.name) recipe.name = heuristicName(doc) || 'Untitled recipe';
+  recipe.url = sourceUrl || null;
+  return recipe;
+}
+
+function renderMarkdown(recipe) {
+  const lines = [`# ${recipe.name}`];
+  if (recipe.url) lines.push('', `> From: ${recipe.url}`);
+  const ingredientGroups = (recipe.ingredientGroups ?? []).filter(group => group.items.length);
+  if (ingredientGroups.length) {
+    lines.push('', '## Ingredients');
+    for (const group of ingredientGroups) {
+      if (group.title) lines.push('', `**${groupTitle(group)}**`);
+      lines.push('', ...group.items.map(item => `- ${item}`));
+    }
+  }
+  const instructionGroups = (recipe.instructionGroups ?? []).filter(group => group.items.length);
+  if (instructionGroups.length) {
+    lines.push('', '## Instructions');
+    for (const group of instructionGroups) {
+      if (group.title) lines.push('', `**${groupTitle(group)}**`);
+      lines.push('', ...group.items.map(item => `1. ${item}`));
+    }
+  }
+  if (recipe.notes) lines.push('', '## Notes', '', recipe.notes);
+  return lines.join('\n') + '\n';
+}
+
+function groupTitle(group) {
+  return /[.:!?]$/.test(group.title) ? group.title : `${group.title}:`;
+}
+
+function initUi() {
+  const form = document.getElementById('convert-form');
+  const urlInput = document.getElementById('recipe-url');
+  const convertButton = document.getElementById('convert-button');
+  const statusElement = document.getElementById('status');
+  const pasteSection = document.getElementById('paste-section');
+  const pastedHtml = document.getElementById('pasted-html');
+  const pasteConvert = document.getElementById('paste-convert');
+  const outputSection = document.getElementById('output');
+  const outputArea = document.getElementById('markdown-output');
+  const copyButton = document.getElementById('copy-button');
+
+  const setStatus = (text, kind) => {
+    statusElement.textContent = text;
+    statusElement.className = kind ? `status-${kind}` : '';
+  };
+
+  const openPasteFallback = () => {
+    pasteSection.open = true;
+    pastedHtml.focus();
+    pasteSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const showResult = recipe => {
+    outputSection.hidden = false;
+    outputArea.value = renderMarkdown(recipe);
+    setStatus('Done — markdown is ready below.', 'ok');
+    outputSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  const showParseFailure = () => {
+    setStatus('Couldn\'t find recipe data on that page. Paste the full page HTML below.', 'error');
+    openPasteFallback();
+  };
+
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
+    const url = normalizeUrlInput(urlInput.value);
+    if (!url) {
+      setStatus('Enter a valid URL, like https://example.com/recipe', 'error');
+      return;
+    }
+    convertButton.disabled = true;
+    try {
+      const html = await fetchRecipeHtml(url, text => setStatus(text, 'progress'));
+      const recipe = parseRecipe(html, url);
+      if (recipe) showResult(recipe);
+      else showParseFailure();
+    } catch (error) {
+      setStatus(`${error.message} Save the page as HTML and paste it below.`, 'error');
+      openPasteFallback();
+    } finally {
+      convertButton.disabled = false;
+    }
+  });
+
+  pasteConvert.addEventListener('click', () => {
+    const html = pastedHtml.value;
+    if (!html.trim()) {
+      setStatus('Paste the page HTML first.', 'error');
+      return;
+    }
+    const sourceUrl = normalizeUrlInput(urlInput.value);
+    const recipe = parseRecipe(html, sourceUrl);
+    if (recipe) showResult(recipe);
+    else showParseFailure();
+  });
+
+  copyButton.addEventListener('click', async () => {
+    const text = outputArea.value;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      outputArea.select();
+      document.execCommand('copy');
+      outputArea.setSelectionRange(0, 0);
+    }
+    copyButton.textContent = 'Copied';
+    setTimeout(() => { copyButton.textContent = 'Copy'; }, 2000);
+  });
+}
+
+if (typeof document !== 'undefined' && document.getElementById('convert-form')) initUi();
+</script>
+</body>
+</html>
