@@ -1,5 +1,6 @@
 # TODO
 
+- [ ] add margin-top: 10px to the Convert pasted HTML button
 - [ ] LLM fallback for recipes without usable JSON-LD/microdata/heuristics
       Status: designed but cut from v1
       Context: OpenCode Go chat endpoints are not browser-callable
