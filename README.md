@@ -50,22 +50,23 @@ Proxy fetches pass through third parties. Want it local? Paste instead.
 
 ## Deploy
 
-### Docker
+Hosted on GitHub Pages: https://kylesezhi.github.io/recipe-markdown/
 
-```
-docker compose up -d --build
-```
+Pushes to `main` deploy automatically through `.github/workflows/pages.yml`.
+The workflow can also be run manually from the Actions tab.
 
-Port 8002. Image is ~5 MB.
+One-time setup: Settings → Pages → Build and deployment → Source: GitHub
+Actions. Until this is enabled, the first deploy fails. Re-run the workflow
+after enabling it.
 
-### No Docker
+### Local preview
 
 ```
 python3 -m http.server 8002
 ```
 
-Or double-click `index.html`. Serving over HTTP is better. corsfix rejects
-the null origin of a `file://` page.
+Then open http://localhost:8002. Or double-click `index.html`. Serving over
+HTTP is better. corsfix rejects the null origin of a `file://` page.
 
 ## Limits
 
